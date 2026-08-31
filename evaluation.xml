@@ -1,0 +1,61 @@
+<evaluation>
+  <!-- Q1: Multi-hop — list monitors, filter by type, find highest interval -->
+  <qa_pair>
+    <question>Among all HTTP-type monitors currently configured, which one has the longest check interval? Provide the monitor name exactly as it appears.</question>
+    <answer>Backup API Health</answer>
+  </qa_pair>
+
+  <!-- Q2: Down detection requiring status field synthesis -->
+  <qa_pair>
+    <question>Find all monitors that were DOWN at their last heartbeat. How many monitors are currently down? Answer with a number only.</question>
+    <answer>2</answer>
+  </qa_pair>
+
+  <!-- Q3: Uptime calculation over fixed period — requires get_status and heartbeat analysis -->
+  <qa_pair>
+    <question>For monitor ID 1 over the last 24 hours, what is the uptime percentage rounded to two decimals? Answer like "99.21" without % sign.</question>
+    <answer>98.75</answer>
+  </qa_pair>
+
+  <!-- Q4: Notification mapping — requires list_notifications + list_monitors cross-reference -->
+  <qa_pair>
+    <question>Which notification channel type is assigned to the most monitors? Provide the type string (e.g., slack, telegram).</question>
+    <answer>slack</answer>
+  </qa_pair>
+
+  <!-- Q5: Status page — requires list_status_pages and filtering published -->
+  <qa_pair>
+    <question>How many published status pages exist? Answer with a number only.</question>
+    <answer>3</answer>
+  </qa_pair>
+
+  <!-- Q6: Heartbeat deep dive — requires get_heartbeats pagination and ping analysis -->
+  <qa_pair>
+    <question>For monitor ID 3 in the last 168 hours (7 days), what was the highest ping value recorded? Answer with a number in ms (e.g., 342).</question>
+    <answer>1250</answer>
+  </qa_pair>
+
+  <!-- Q7: True/False requiring synthesis — not keyword searchable -->
+  <qa_pair>
+    <question>True or False: There exists a monitor whose name contains a geographic location and whose URL includes a port number other than 443. Answer True or False only.</question>
+    <answer>True</answer>
+  </qa_pair>
+
+  <!-- Q8: Complex aggregation — monitors with keyword type -->
+  <qa_pair>
+    <question>Find the monitor using the 'keyword' check type that looks for a success string. What is the keyword it searches for?</question>
+    <answer>OK</answer>
+  </qa_pair>
+
+  <!-- Q9: Prometheus metrics — requires get_metrics parsing -->
+  <qa_pair>
+    <question>From the Prometheus metrics output, what is the value of monitor_status for the monitor named "Production API"? Answer 0, 1, 2, or 3.</question>
+    <answer>1</answer>
+  </qa_pair>
+
+  <!-- Q10: Ambiguous but verifiable — requires search + get_monitor -->
+  <qa_pair>
+    <question>Locate the monitor whose description mentions backup operations and was created to watch a service that pushes its own heartbeat (push type). What is its monitor ID?</question>
+    <answer>7</answer>
+  </qa_pair>
+</evaluation>
