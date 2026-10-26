@@ -4,7 +4,7 @@ Connect an MCP client to an existing Uptime Kuma instance to inspect monitors, r
 
 ## Requirements and verification
 
-Use Node.js 22 or newer. All 12 tools were exercised over both stdio and authenticated HTTP through an MCP client against a disposable Uptime Kuma **2.5.7** instance on Windows with Node.js 24.15.0. See [validation](docs/VALIDATION.md) and the [demo](DEMO.md). Other Kuma versions and monitor-specific creation options need additional testing.
+Use Node.js 22 or newer. All 12 tools were exercised over both stdio and authenticated HTTP through an MCP client against a disposable Uptime Kuma **2.5.7** instance on Windows with Node.js 24.15.0. See [validation](docs/VALIDATION.md) and the [demo](DEMO.md). HTTP, keyword, TCP port, ping, DNS and push monitor lifecycles are live-tested. Steam, MQTT and Docker creation is not exposed; configure those in Kuma directly. Other Kuma versions need additional testing.
 
 ```sh
 npm ci
@@ -31,7 +31,7 @@ Build with `npm run build`, then add this configuration to your MCP client. Repl
 }
 ```
 
-Alternatively set `UPTIME_KUMA_TOKEN` to a Kuma login JWT. `UPTIME_KUMA_API_KEY` is only for `/metrics`; it does not authenticate Socket.IO tools. Username/password login supports `UPTIME_KUMA_TOTP` when a fresh two-factor code is required. Reusing a one-time code across calls will not work; use a login JWT for unattended use.
+Alternatively set `UPTIME_KUMA_TOKEN` to a Kuma login JWT. `UPTIME_KUMA_API_KEY` is only for `/metrics`; it does not authenticate Socket.IO tools. Username/password login supports `UPTIME_KUMA_TOTP` when a fresh two-factor code is required. The first successful password/TOTP login caches its returned JWT in memory for later calls. A fresh process needs a new code or an explicit login JWT. Reusing a one-time code for another password login will not work.
 
 ## Local Streamable HTTP
 
@@ -57,8 +57,8 @@ Point your MCP client to `http://127.0.0.1:3000/mcp` with that bearer header. `/
 |---|---|
 | `list_monitors` | Search and paginate monitor configuration |
 | `get_monitor` | Read one monitor without credential fields |
-| `create_monitor` | Create a monitor; HTTP creation is live-tested |
-| `edit_monitor` | Merge provided fields into the existing monitor |
+| `create_monitor` | Create an HTTP, keyword, port, ping, DNS or push monitor |
+| `edit_monitor` | Merge provided fields; active changes invoke Kuma pause/resume |
 | `delete_monitor` | Delete a monitor and its history |
 | `pause_monitor` / `resume_monitor` | Stop/start monitoring |
 | `get_heartbeats` | Recent checks, newest first |
@@ -68,6 +68,8 @@ Point your MCP client to `http://127.0.0.1:3000/mcp` with that bearer header. `/
 | `get_metrics` | Prometheus exposition from authenticated `/metrics` |
 
 `list_monitors` supports `limit`, `offset`, and `search`. Read tools with a `response_format` parameter accept `markdown` or `json`. An API failure returns `isError: true`; status with no observations returns null instead of inventing 0% uptime. Status comes from Kuma's aggregate chart buckets, not a separately calculated wall-clock SLA.
+
+Creating a push monitor returns its secret `push_url`; keep that URL private. DNS creation accepts `dns_resolve_type`, `dns_resolve_server`, and an optional resolver `port`.
 
 Monitor credential fields are filtered, but names, URLs, descriptions, heartbeats and metrics can still contain private operational information. Only connect clients you trust. Write tools use your Kuma account's permissions; tool annotations do not enforce user approval.
 

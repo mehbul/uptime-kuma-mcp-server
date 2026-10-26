@@ -2,6 +2,7 @@ import { io, Socket } from "socket.io-client";
 import axios from "axios";
 import { getUptimeKumaUrl, SOCKET_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from "../constants.js";
 import type { SocketResponse, UptimeKumaMonitor, Heartbeat } from "../types.js";
+export { getUptimeKumaUrl as getBaseUrl } from "../constants.js";
 
 /**
  * Uptime Kuma uses Socket.IO as primary API (like the Vue frontend).

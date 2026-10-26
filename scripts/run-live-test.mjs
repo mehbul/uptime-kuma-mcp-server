@@ -44,6 +44,11 @@ try {
     const [code] = await once(demo, "exit");
     if (code !== 0) throw new Error(`Live ${transport} demo failed; isolated data is in ${dataDir}`);
   }
+  const twoFactor = spawn(process.execPath, ["scripts/two-factor-demo.mjs"], {
+    env: { ...process.env, KUMA_TEST_URL: url, KUMA_TEST_PASSWORD: password }, stdio: "inherit",
+  });
+  const [twoFactorCode] = await once(twoFactor, "exit");
+  if (twoFactorCode !== 0) throw new Error(`2FA demo failed; isolated data is in ${dataDir}`);
 } finally {
   if (kuma.exitCode === null) {
     const exited = once(kuma, "exit");

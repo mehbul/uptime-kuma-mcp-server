@@ -3,7 +3,7 @@
 ## Verified locally
 
 - Windows, Node.js 24.15.0, TypeScript strict build.
-- `npm test`: **11 passing automated regression tests**.
+- `npm test`: **16 passing automated regression tests**.
 - `npm run test:live`: **all 12 tools pass against real Uptime Kuma 2.5.7, over both stdio and authenticated Streamable HTTP**.
 - Upstream release commit: `d54e4619e52553416e292549f435cc7e57330c29`.
 - Current upstream `master` protocol was also inspected at `be2b4409657a2873b4b08946509dad7a1bf59588`; this is source inspection, not a live compatibility claim.
@@ -24,11 +24,19 @@
 
 Status is a ratio of successful versus failed observations in Kuma chart buckets, not an independently calculated duration-weighted SLA. Empty history yields null. Uptime calculations depend on Kuma's aggregation and retention.
 
+## Follow-up fixes verified
+
+- Required URL/keyword/hostname/port inputs are validated before creating monitors.
+- DNS resolver and record-type settings reach Kuma.
+- Push monitors receive random 128-bit tokens and return the push URL only at creation. A real push produces an UP heartbeat.
+- `edit_monitor(active=...)` invokes pause/resume instead of relying on the edit event, which ignores active changes.
+
 ## Limits
 
-- The real creation/edit/delete demo uses an HTTP monitor. Other advertised monitor types and their required fields need separate compatibility testing.
+- The live demo covers HTTP, keyword, port, ping, DNS and push monitor lifecycles. The latter five must produce an UP heartbeat from local fixtures, then survive active-state edits and deletion. Steam, MQTT and Docker creation is rejected explicitly because the tool does not expose the required settings.
 - Notification filtering uses a nonempty protocol fixture; the disposable real server has no configured notification channels.
-- Two-factor challenges, alternate Kuma versions, TLS/reverse-proxy deployments and remote hosting have not been live-tested.
+- Real 2FA checks over stdio cover missing-code guidance, invalid-code rejection, fresh-TOTP login, cached JWT reuse, one-time-code replay rejection and explicit JWT login with 2FA enabled. HTTP-to-Kuma 2FA is not separately exercised.
+- Alternate Kuma versions, TLS/reverse-proxy deployments and remote hosting have not been live-tested.
 - The CI workflow covers Node.js 22 on Windows/Linux and a pinned Linux live-Kuma demo; GitHub's run status is the evidence for those environments.
 - Automated tests and this executable demo do not satisfy upstream's requirement for the contributor's personal code review and manual testing. No upstream acceptance or production-readiness claim is made.
 

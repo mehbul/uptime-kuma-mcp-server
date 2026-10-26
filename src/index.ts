@@ -10,7 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { CHARACTER_LIMIT, ResponseFormat } from "./constants.js";
 import * as client from "./services/uptime-kuma-client.js";
@@ -71,11 +71,13 @@ function createMcpServer() {
   const CreateMonitorSchema = z
     .object({
       name: z.string().min(1).max(200).describe("Monitor display name"),
-      type: z.enum(["http", "port", "ping", "keyword", "dns", "push", "steam", "mqtt", "docker"]).default("http").describe("Monitor type"),
+      type: z.enum(["http", "port", "ping", "keyword", "dns", "push"]).default("http").describe("Supported monitor type; configure Steam, MQTT and Docker monitors in Kuma directly"),
       url: z.string().url().optional().describe("URL for http/keyword monitors"),
       hostname: z.string().optional().describe("Hostname for port/ping/dns"),
       port: z.number().int().min(1).max(65535).optional().describe("Port for port monitors"),
       keyword: z.string().optional().describe("Keyword to search for (keyword type)"),
+      dns_resolve_type: z.enum(["A", "AAAA", "CAA", "CNAME", "MX", "NS", "PTR", "SOA", "SRV", "TXT"]).optional().describe("DNS record type (default A)"),
+      dns_resolve_server: z.string().optional().describe("DNS resolver address; omit to use system resolvers"),
       interval: z.number().int().min(20).max(86400).default(60).describe("Check interval seconds (min 20)"),
       retryInterval: z.number().int().min(20).optional().describe("Retry interval seconds"),
       maxretries: z.number().int().min(0).max(10).optional().describe("Retries before down"),
@@ -210,7 +212,7 @@ function createMcpServer() {
 
   Args:
   - name (required): display name
-  - type: http|port|ping|keyword|dns|push|steam|mqtt|docker (default http)
+  - type: http|port|ping|keyword|dns|push (default http)
   - url/hostname/port/keyword as required by type
   - interval (default 60, min 20)
   - notificationIDList (optional): { "1": true }
@@ -246,13 +248,21 @@ function createMcpServer() {
         if (params.maxretries !== undefined) payload.maxretries = params.maxretries;
         if (params.description) payload.description = params.description;
         if (params.notificationIDList) payload.notificationIDList = params.notificationIDList;
-        // required defaults for http
-        if (params.type === "http" && !payload.url) throw new Error("url is required for http monitors");
+        if (["http", "keyword"].includes(params.type) && !payload.url) throw new Error("url is required for http/keyword monitors");
+        if (params.type === "keyword" && !params.keyword?.trim()) throw new Error("keyword is required for keyword monitors");
+        if (["ping", "dns"].includes(params.type) && !params.hostname?.trim()) throw new Error("hostname is required for ping/dns monitors");
         if (params.type === "port" && (!payload.hostname || !payload.port)) throw new Error("hostname+port required for port monitors");
+        if (params.type === "dns") {
+          payload.dns_resolve_type = params.dns_resolve_type ?? "A";
+          payload.dns_resolve_server = params.dns_resolve_server ?? "";
+          payload.port = params.port ?? 53;
+        }
+        if (params.type === "push") payload.pushToken = randomBytes(16).toString("hex");
 
         const { monitorID } = await client.createMonitor(payload);
-        const text = `Created monitor "${params.name}" (type=${params.type}) with ID ${monitorID}`;
-        return { content: [{ type: "text", text }], structuredContent: { monitorID, name: params.name, type: params.type } };
+        const push = params.type === "push" ? { push_url: `${client.getBaseUrl()}/api/push/${payload.pushToken}` } : {};
+        const text = `Created monitor "${params.name}" (type=${params.type}) with ID ${monitorID}${"push_url" in push ? `\nPush URL (keep private): ${push.push_url}` : ""}`;
+        return { content: [{ type: "text", text }], structuredContent: { monitorID, name: params.name, type: params.type, ...push } };
       } catch (e) {
         return { content: [{ type: "text", text: client.handleApiError(e) }], isError: true };
       }
@@ -280,6 +290,8 @@ function createMcpServer() {
         const merged: Record<string, unknown> = { ...existing, ...params };
         // API expects `id` field
         await client.editMonitor(merged);
+        if (params.active === false) await client.pauseMonitor(params.id);
+        if (params.active === true) await client.resumeMonitor(params.id);
         return { content: [{ type: "text", text: `Updated monitor ${params.id}` }], structuredContent: { id: params.id, updated: true } };
       } catch (e) {
         return { content: [{ type: "text", text: client.handleApiError(e) }], isError: true };

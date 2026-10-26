@@ -9,6 +9,8 @@ The automated demo launches a fresh Uptime Kuma 2.5.7 backend with an isolated S
 5. List notification channels and the seeded status page.
 6. Fetch authenticated Prometheus metrics.
 7. Delete the monitor and confirm subsequent lookup returns `isError`.
+8. Create keyword, port, ping, DNS and push monitors using loopback fixtures; require UP heartbeats, verify active-state edits, and delete them.
+9. Enable 2FA on the disposable account, verify missing/invalid/reused-code rejection, fresh TOTP login, cached-JWT reuse and explicit-JWT login, then disable 2FA.
 
 ```powershell
 $env:KUMA_TEST_SERVER_DIR = 'C:\path\to\installed-uptime-kuma-2.5.7'

@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import { createSocket } from "node:dgram";
 
 const url = process.env.KUMA_TEST_URL;
 if (!url || !["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname)) {
@@ -19,6 +20,16 @@ const username = "mcp-integration";
 const password = process.env.KUMA_TEST_PASSWORD || `Test-${randomBytes(18).toString("hex")}!`;
 let mcp;
 let httpProcess;
+const dns = createSocket("udp4");
+dns.on("message", (query, remote) => {
+  // Minimal loopback-only A-record fixture; no upstream DNS traffic.
+  let end = 12;
+  while (query[end]) end += query[end] + 1;
+  end += 5;
+  const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+  const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1]);
+  dns.send(Buffer.concat([header, query.subarray(12, end), answer]), remote.port, remote.address);
+});
 let pagesOnLogin = {};
 socket.on("statusPageList", (pages) => { pagesOnLogin = pages; });
 try {
@@ -91,6 +102,36 @@ try {
   const missing = await mcp.callTool({ name: "uptime_kuma_get_monitor", arguments: { monitor_id: id } });
   assert.equal(missing.isError, true);
   console.log("PASS deleted monitor returns isError");
+  await new Promise((resolve) => dns.bind(0, "127.0.0.1", resolve));
+  const cases = [
+    { type: "keyword", url: `${url}/api/entry-page`, keyword: "type" },
+    { type: "port", hostname: "127.0.0.1", port: Number(new URL(url).port) },
+    { type: "ping", hostname: "127.0.0.1" },
+    { type: "dns", hostname: "mcp.test", port: dns.address().port, dns_resolve_type: "A", dns_resolve_server: "127.0.0.1" },
+    { type: "push" },
+  ];
+  for (const config of cases) {
+    const created = await call("create_monitor", { name: `MCP ${config.type}`, ...config });
+    const id = created.monitorID;
+    if (config.type === "push") {
+      const response = await fetch(`${created.push_url}?status=up&msg=MCP-test&ping=7`);
+      assert.equal((await response.json()).ok, true);
+    }
+    let up = false;
+    let lastBeats;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      lastBeats = await call("get_heartbeats", { monitor_id: id, response_format: "json", limit: 5 });
+      if (lastBeats.heartbeats.some((b) => b.status === 1)) { up = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.ok(up, `${config.type} must produce an UP heartbeat: ${JSON.stringify(lastBeats)}`);
+    await call("edit_monitor", { id, active: false });
+    assert.equal((await call("get_monitor", { monitor_id: id, response_format: "json" })).active, false);
+    await call("edit_monitor", { id, active: true });
+    assert.equal((await call("get_monitor", { monitor_id: id, response_format: "json" })).active, true);
+    await call("delete_monitor", { monitor_id: id });
+    console.log(`PASS ${config.type}: creation, UP heartbeat, edit active, deletion`);
+  }
   await rpc("deleteAPIKey", key.keyID);
   console.log("PASS all 12 tools against real Uptime Kuma");
 } finally {
@@ -101,4 +142,5 @@ try {
     await exited;
   }
   socket.disconnect();
+  try { dns.close(); } catch {}
 }
