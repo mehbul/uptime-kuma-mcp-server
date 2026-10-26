@@ -1,111 +1,93 @@
-# uptime-kuma-mcp-server
+# Uptime Kuma MCP server
 
-MCP server for [Uptime Kuma](https://github.com/louislam/uptime-kuma) — 90k stars, MIT — a fancy self-hosted monitoring tool.
+Connect an MCP client to an existing Uptime Kuma instance to inspect monitors, review checks, manage monitors, and read Prometheus metrics. This is an independent community integration; it is not an official Uptime Kuma component.
 
-This is **Option 1** from the agent-reach research: the top open-source project with no official MCP in the parent org (only a 47-star community fork `DavidFuchs/mcp-uptime-kuma`). Built with the `mcp-builder` skill (Anthropic `anthropics/skills@mcp-builder`, 109K installs) following TypeScript best practices.
+## Requirements and verification
 
-## Why this repo?
-- 90,788 stars, 793 open issues — highly active, contributor-friendly
-- No `louislam/uptime-kuma` official MCP — community gap <0.1% parent size
-- Socket.IO primary API (real-time) + REST `/metrics` — perfect MCP surface
-- Use case: `Claude: "what's down? pause monitors for deploy, create https check for new service"`
+Use Node.js 22 or newer. All 12 tools were exercised over both stdio and authenticated HTTP through an MCP client against a disposable Uptime Kuma **2.5.7** instance on Windows with Node.js 24.15.0. See [validation](docs/VALIDATION.md) and the [demo](DEMO.md). Other Kuma versions and monitor-specific creation options need additional testing.
 
-## Tools (12) — curated 19% of API surface
-
-| Tool | Description | Annotations |
-|---|---|---|
-| `uptime_kuma_list_monitors` | List with pagination + search | readOnly |
-| `uptime_kuma_get_monitor` | Get single monitor details | readOnly |
-| `uptime_kuma_create_monitor` | Create (http/port/ping/keyword/dns/push…) | create |
-| `uptime_kuma_edit_monitor` | Edit existing (merge) | update |
-| `uptime_kuma_delete_monitor` | Delete (destructive) | destructive |
-| `uptime_kuma_pause_monitor` | Pause checks | update |
-| `uptime_kuma_resume_monitor` | Resume | update |
-| `uptime_kuma_get_heartbeats` | Recent heartbeats (limit/period) | readOnly |
-| `uptime_kuma_get_status` | Uptime % + avg ping | readOnly |
-| `uptime_kuma_list_notifications` | Slack/email/etc channels | readOnly |
-| `uptime_kuma_list_status_pages` | Public status pages | readOnly |
-| `uptime_kuma_get_metrics` | Prometheus `/metrics` | readOnly |
-
-All list tools support `limit/offset/search` pagination and `response_format: markdown|json`, `CHARACTER_LIMIT=25000` truncation.
-
-## Quick start
-
-### 1. Env
-```bash
-# required
-export UPTIME_KUMA_URL=http://localhost:3001
-# auth: either JWT token or username+password
-export UPTIME_KUMA_TOKEN=eyJ...        # from login with Remember Me
-# or
-export UPTIME_KUMA_USERNAME=admin
-export UPTIME_KUMA_PASSWORD=secret
-export UPTIME_KUMA_TOTP=123456         # if 2FA enabled
-
-# optional for /metrics REST
-export UPTIME_KUMA_API_KEY=uk2_xxxx
-export TRANSPORT=stdio   # or http
-export PORT=3000
+```sh
+npm ci
+npm test
 ```
 
-### 2. Install & build
-```bash
-npm install
-npm run build
-```
+## Connect over stdio
 
-### 3. Run
+Build with `npm run build`, then add this configuration to your MCP client. Replace the path and credentials with your own values:
 
-**stdio (Claude Desktop / Cursor):**
 ```json
 {
   "mcpServers": {
     "uptime-kuma": {
       "command": "node",
-      "args": ["C:/Users/Mehbul Islam/uptime-kuma-mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/uptime-kuma-mcp-server/dist/index.js"],
       "env": {
-        "UPTIME_KUMA_URL": "http://localhost:3001",
-        "UPTIME_KUMA_USERNAME": "admin",
-        "UPTIME_KUMA_PASSWORD": "secret"
+        "UPTIME_KUMA_URL": "http://127.0.0.1:3001",
+        "UPTIME_KUMA_USERNAME": "your-username",
+        "UPTIME_KUMA_PASSWORD": "your-password"
       }
     }
   }
 }
 ```
 
-**Streamable HTTP (remote):**
-```bash
-TRANSPORT=http PORT=3000 node dist/index.js
-# → http://localhost:3000/mcp  + /health
+Alternatively set `UPTIME_KUMA_TOKEN` to a Kuma login JWT. `UPTIME_KUMA_API_KEY` is only for `/metrics`; it does not authenticate Socket.IO tools. Username/password login supports `UPTIME_KUMA_TOTP` when a fresh two-factor code is required. Reusing a one-time code across calls will not work; use a login JWT for unattended use.
+
+## Local Streamable HTTP
+
+HTTP mode requires a separate `MCP_HTTP_TOKEN`. It binds to **127.0.0.1** and accepts non-browser clients with `Authorization: Bearer <MCP_HTTP_TOKEN>`. It rejects browser Origin headers and unexpected Host headers. It is not a public hosting configuration.
+
+PowerShell:
+
+```powershell
+$env:UPTIME_KUMA_URL = 'http://127.0.0.1:3001'
+$env:UPTIME_KUMA_USERNAME = 'your-username'
+$env:UPTIME_KUMA_PASSWORD = 'your-password'
+$env:MCP_HTTP_TOKEN = 'replace-with-a-long-random-token'
+$env:TRANSPORT = 'http'
+$env:PORT = '3000'
+node dist/index.js
 ```
-Claude Code:
-```bash
-claude mcp add --transport http uptime-kuma http://localhost:3000/mcp
+
+Point your MCP client to `http://127.0.0.1:3000/mcp` with that bearer header. `/health` is an unauthenticated liveness endpoint; it does not check Kuma connectivity. Concurrent requests use independent MCP server instances.
+
+## Tools
+
+| Tool prefix: `uptime_kuma_` | Behavior |
+|---|---|
+| `list_monitors` | Search and paginate monitor configuration |
+| `get_monitor` | Read one monitor without credential fields |
+| `create_monitor` | Create a monitor; HTTP creation is live-tested |
+| `edit_monitor` | Merge provided fields into the existing monitor |
+| `delete_monitor` | Delete a monitor and its history |
+| `pause_monitor` / `resume_monitor` | Stop/start monitoring |
+| `get_heartbeats` | Recent checks, newest first |
+| `get_status` | Successful-check ratio and weighted average ping from Kuma chart buckets |
+| `list_notifications` | Channel ID, name, type and active state; credentials omitted |
+| `list_status_pages` | Status-page configuration |
+| `get_metrics` | Prometheus exposition from authenticated `/metrics` |
+
+`list_monitors` supports `limit`, `offset`, and `search`. Read tools with a `response_format` parameter accept `markdown` or `json`. An API failure returns `isError: true`; status with no observations returns null instead of inventing 0% uptime. Status comes from Kuma's aggregate chart buckets, not a separately calculated wall-clock SLA.
+
+Monitor credential fields are filtered, but names, URLs, descriptions, heartbeats and metrics can still contain private operational information. Only connect clients you trust. Write tools use your Kuma account's permissions; tool annotations do not enforce user approval.
+
+## Development
+
+```sh
+npm test
 ```
 
-### 4. Test with Inspector
-```bash
-npm run inspect
-# or
-npx @modelcontextprotocol/inspector node dist/index.js
+To reproduce the live demo, install a separate Kuma 2.5.7 source checkout with `npm ci --omit=dev`. Then:
+
+```powershell
+$env:KUMA_TEST_SERVER_DIR = 'C:\path\to\uptime-kuma-2.5.7'
+npm run test:live
 ```
 
-## Example prompts
-- "List my down monitors"
-- "Create an http monitor for https://example.com every 60s and notify via Slack"
-- "Pause monitor 5 during maintenance, resume after"
-- "Show last 50 heartbeats for monitor 3, why did it fail?"
-- "What's the 24h uptime % for monitor 1?"
-- "List my status pages"
+The runner uses an ephemeral loopback port and a new temporary SQLite data directory, creates its own demo account, runs the tools, and stops the server. It does not connect to an existing deployment. Temporary test data is retained under the system temp directory for diagnosis.
 
-## Architecture
-- **Transport:** `StdioServerTransport` (local) + `StreamableHTTPServerTransport` (stateless, per-request, JSON)
-- **Auth:** Socket.IO `login`/`loginByToken` flow (mirrors Vue frontend `src/mixins/socket.js`), REST Basic Auth for `/metrics`
-- **Validation:** Zod `.strict()` with constraints, actionable errors
-- **Pagination:** `has_more`/`next_offset`, respects limit
-
-## Contributing upstream
-This server is designed to be proposed to `louislam/uptime-kuma` as `examples/mcp-server` or standalone `louislam/uptime-kuma-mcp-server`. It improves on existing community (47 stars, 230 dl/week) with full pagination, markdown/json, 12 tools vs 5, and HTTP+stdio.
+See [contributing](CONTRIBUTING.md) for upstream discussion and review requirements.
 
 ## License
-MIT — same as Uptime Kuma.
+
+MIT. See [LICENSE](LICENSE).

@@ -1,47 +1,15 @@
-# Contributing to uptime-kuma-mcp-server
+# Contributing
 
-This MCP server is designed to be contributed upstream to `louislam/uptime-kuma` (90k stars, MIT). Below is the path we followed using `agent-reach` (gh CLI + Exa) and `mcp-builder`.
+This is a standalone community integration. Use Node.js 22 or newer, run `npm ci`, and run `npm test` before submitting changes. Changes to Socket.IO calls should also be checked with `npm run test:live` against a disposable supported Kuma checkout.
 
-## How we found the gap
-- `agent-reach doctor --json` verified `gh CLI` auth (`mehbul`) and `Exa via mcporter`
-- `gh search repos "uptime-kuma mcp"` → only `DavidFuchs/mcp-uptime-kuma` (47 stars, 230 dl/week) — no `louislam` org official
-- Exa `Uptime Kuma MCP official docs` → no official, only wiki Internal-API + DeepWiki REST/Socket.IO docs
-- `gh api repos/louislam/uptime-kuma` → 90,788 stars, MIT, 793 issues — ideal visibility
+The automated tests exercise authentication ordering, login-time list events, status aggregation, credential filtering, and concurrent authenticated HTTP requests. CI also runs the live demo against the pinned Uptime Kuma 2.5.7 commit.
 
-## Local dev
-```bash
-npm install
-npm run build
-# test without live Kuma (tools/list + graceful error)
-node test-mcp2.js
-# inspect
-npx @modelcontextprotocol/inspector node dist/index.js
-```
+## Upstream discussion
 
-With live Kuma:
-```bash
-export UPTIME_KUMA_URL=http://localhost:3001
-export UPTIME_KUMA_USERNAME=admin
-export UPTIME_KUMA_PASSWORD=secret
-node dist/index.js  # stdio
-TRANSPORT=http PORT=3000 node dist/index.js  # http → http://localhost:3000/mcp
-```
+The existing proposal is [louislam/uptime-kuma#7795](https://github.com/louislam/uptime-kuma/issues/7795). It was closed by an issue-template bot. Community comments support the integration, but no maintainer acceptance is established.
 
-## PR to upstream
-Proposed location: `louislam/uptime-kuma` → `examples/mcp-server/` or new `louislam/uptime-kuma-mcp-server`
+Before proposing integration into upstream, read its current [CONTRIBUTING.md](https://github.com/louislam/uptime-kuma/blob/master/CONTRIBUTING.md) and [AGENTS.md](https://github.com/louislam/uptime-kuma/blob/master/AGENTS.md). Major features require discussion first. Upstream requires personal understanding, review, and manual testing of generated changes before submission. Automated checks do not replace that requirement.
 
-Template title: `feat: add official MCP server (12 tools, stdio + streamable HTTP)`
+Keep implementation fixes in this standalone repository while maintainers decide whether they prefer an ecosystem link, an example, or another approach. Do not label this integration official without their agreement.
 
-Body:
-- Fills gap: no official MCP (<0.1% community)
-- 12 curated tools (readOnly 7, create/update 4, destructive 1)
-- Transports: Stdio + Streamable HTTP (stateless)
-- Auth: reuse `login`/`loginByToken` (Socket.IO) — mirrors `src/mixins/socket.js`
-- Includes `evaluation.xml` (10 QAs) per mcp-builder
-
-## Code standards
-- `registerTool` with Zod `.strict()`, annotations, markdown/json dual format, pagination, `CHARACTER_LIMIT=25000`
-- `npm run build` must pass, no `any`, strict TS
-
-## License
-MIT — same as Uptime Kuma
+A follow-up draft is saved in [docs/upstream-follow-up.md](docs/upstream-follow-up.md). Review and adapt it yourself after completing the manual demo.
