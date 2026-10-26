@@ -1,0 +1,38 @@
+name: Verify MCP integration
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  regression:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+  live-kuma:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/checkout@v4
+        with:
+          repository: louislam/uptime-kuma
+          ref: d54e4619e52553416e292549f435cc7e57330c29
+          path: .kuma-test-source
+      - run: npm ci --omit=dev --no-audit --no-fund
+        working-directory: .kuma-test-source
+      - run: npm run test:live
+        env:
+          KUMA_TEST_SERVER_DIR: ${{ github.workspace }}/.kuma-test-source

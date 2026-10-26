@@ -48,6 +48,8 @@ export interface StatusPage {
 // Socket callback shape
 export interface SocketResponse<T = unknown> {
   ok: boolean;
+  tokenRequired?: boolean;
+  token?: string;
   msg?: string;
   msgi18n?: boolean;
   monitorID?: number;

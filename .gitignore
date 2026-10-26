@@ -6,3 +6,5 @@ dist/
 .mcp/
 evaluation_report.md
 coverage/
+
+.kuma-test-source/

@@ -2,6 +2,7 @@ import { io, Socket } from "socket.io-client";
 import axios from "axios";
 import { getUptimeKumaUrl, SOCKET_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from "../constants.js";
 import type { SocketResponse, UptimeKumaMonitor, Heartbeat } from "../types.js";
+export { getUptimeKumaUrl as getBaseUrl } from "../constants.js";
 
 /**
  * Uptime Kuma uses Socket.IO as primary API (like the Vue frontend).
@@ -12,54 +13,77 @@ import type { SocketResponse, UptimeKumaMonitor, Heartbeat } from "../types.js";
  *  4. disconnect
  */
 
+let cachedLogin: { identity: string; token: string } | undefined;
+
 function getAuth() {
   const username = process.env.UPTIME_KUMA_USERNAME;
   const password = process.env.UPTIME_KUMA_PASSWORD;
   const token = process.env.UPTIME_KUMA_TOKEN; // JWT from previous login
   if (token) return { type: "token" as const, token };
-  if (username && password) return { type: "password" as const, username, password };
+  if (username && password) {
+    const identity = JSON.stringify([getUptimeKumaUrl(), username, password]);
+    if (cachedLogin?.identity === identity) return { type: "token" as const, token: cachedLogin.token };
+    return { type: "password" as const, username, password, identity };
+  }
   throw new Error(
     "Authentication required: set UPTIME_KUMA_TOKEN (JWT) OR UPTIME_KUMA_USERNAME + UPTIME_KUMA_PASSWORD"
   );
 }
 
-async function createAuthenticatedSocket(): Promise<Socket> {
+async function createAuthenticatedSocket(): Promise<{ socket: Socket; lists: Map<string, unknown> }> {
+  const auth = getAuth();
   const url = getUptimeKumaUrl();
   const socket: Socket = io(url, {
     transports: ["websocket", "polling"],
     timeout: SOCKET_TIMEOUT_MS,
     reconnection: false,
+    autoConnect: false,
   });
+  // afterLogin publishes these lists before login/loginByToken acknowledges.
+  const lists = new Map<string, unknown>();
+  for (const event of ["monitorList", "notificationList", "statusPageList"]) {
+    socket.on(event, (data: unknown) => lists.set(event, data));
+  }
 
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Socket connection timeout")), SOCKET_TIMEOUT_MS);
-    socket.once("connect", () => {
-      clearTimeout(timer);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for Uptime Kuma server info")), SOCKET_TIMEOUT_MS);
+      // The server awaits sendInfo before registering login command handlers.
+      socket.once("info", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      socket.once("connect_error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Socket connect_error: ${err.message}`));
+      });
+      socket.connect();
     });
-    socket.once("connect_error", (err) => {
-      clearTimeout(timer);
-      reject(new Error(`Socket connect_error: ${err.message}`));
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Login timeout")), SOCKET_TIMEOUT_MS);
+      const cb = (res: SocketResponse) => {
+        clearTimeout(timer);
+        if (res?.ok) {
+          if (auth.type === "password" && res.token) cachedLogin = { identity: auth.identity, token: res.token };
+          resolve();
+        }
+        else reject(new Error(res?.tokenRequired ? "Two-factor code required: set UPTIME_KUMA_TOTP" : res?.msg || "Login failed — check credentials"));
+      };
+      if (auth.type === "token") {
+        socket.emit("loginByToken", auth.token, cb);
+      } else {
+        const totp = process.env.UPTIME_KUMA_TOTP;
+        socket.emit("login", { username: auth.username, password: auth.password, token: totp || "" }, cb);
+      }
     });
-  });
 
-  const auth = getAuth();
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Login timeout")), SOCKET_TIMEOUT_MS);
-    const cb = (res: SocketResponse) => {
-      clearTimeout(timer);
-      if (res?.ok) resolve();
-      else reject(new Error(res?.msg || "Login failed — check credentials"));
-    };
-    if (auth.type === "token") {
-      socket.emit("loginByToken", auth.token, cb);
-    } else {
-      const totp = process.env.UPTIME_KUMA_TOTP;
-      socket.emit("login", { username: auth.username, password: auth.password, token: totp || "" }, cb);
-    }
-  });
-
-  return socket;
+    return { socket, lists };
+  } catch (error) {
+    cachedLogin = undefined;
+    socket.disconnect();
+    throw error;
+  }
 }
 
 function emitWithCallback<T>(socket: Socket, event: string, ...args: unknown[]): Promise<SocketResponse<T>> {
@@ -74,10 +98,10 @@ function emitWithCallback<T>(socket: Socket, event: string, ...args: unknown[]):
   });
 }
 
-async function withSocket<T>(fn: (socket: Socket) => Promise<T>): Promise<T> {
-  const socket = await createAuthenticatedSocket();
+async function withSocket<T>(fn: (socket: Socket, lists: Map<string, unknown>) => Promise<T>): Promise<T> {
+  const { socket, lists } = await createAuthenticatedSocket();
   try {
-    return await fn(socket);
+    return await fn(socket, lists);
   } finally {
     try {
       socket.disconnect();
@@ -88,27 +112,9 @@ async function withSocket<T>(fn: (socket: Socket) => Promise<T>): Promise<T> {
 // ---------- High-level API wrappers ----------
 
 export async function listMonitors(): Promise<Record<string, UptimeKumaMonitor>> {
-  return withSocket(async (socket) => {
-    // Uptime Kuma pushes monitorList via event, but also supports getMonitorList callback in newer versions
-    // Try explicit callback first
-    try {
-      const res = await emitWithCallback<Record<string, UptimeKumaMonitor>>(socket, "getMonitorList");
-      if (res.ok && res.data) return res.data as unknown as Record<string, UptimeKumaMonitor>;
-      // fallback shape: res is the list itself when using callback-less emit
-    } catch {}
-
-    // Fallback: listen for monitorList event (pushed after login)
-    return await new Promise<Record<string, UptimeKumaMonitor>>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for monitorList event")), SOCKET_TIMEOUT_MS);
-      const handler = (data: Record<string, UptimeKumaMonitor>) => {
-        clearTimeout(timer);
-        socket.off("monitorList", handler);
-        resolve(data);
-      };
-      socket.on("monitorList", handler);
-      // Trigger a refresh by emitting getMonitorList without callback — server will push event
-      (socket.emit as unknown as (...a: unknown[]) => void)("getMonitorList");
-    });
+  return withSocket(async (_socket, lists) => {
+    if (!lists.has("monitorList")) throw new Error("Kuma did not send monitorList during login");
+    return lists.get("monitorList") as Record<string, UptimeKumaMonitor>;
   });
 }
 
@@ -165,58 +171,41 @@ export async function getMonitorBeats(monitorID: number, periodHours = 24): Prom
   });
 }
 
-export async function getMonitorStatus(monitorID: number, periodHours = 24): Promise<{ uptime: number; avgPing: number | null }> {
-  // Uptime Kuma exposes uptime via getMonitorBeats + uptime event; we compute from beats or call getMonitorUptime
+export async function getMonitorStatus(monitorID: number, periodHours = 24): Promise<{ uptime: number | null; avgPing: number | null }> {
   return withSocket(async (socket) => {
-    // Try dedicated event
-    try {
-      const res = await emitWithCallback<{ uptime: number; avgPing: number }>(socket, "getMonitorUptime", monitorID, periodHours);
-      if (res.ok && (res.data as unknown as { uptime: number })) {
-        const d = res.data as unknown as { uptime: number; avgPing: number };
-        return d;
-      }
-    } catch {}
-    // Fallback compute from beats
-    const beats = await emitWithCallback<Heartbeat[]>(socket, "getMonitorBeats", monitorID, periodHours).then(
-      (r) => (r.data as unknown as Heartbeat[]) || []
+    // Kuma 2.x aggregates successful/failed checks into chart buckets.
+    // Weight pings by successful checks, rather than averaging bucket averages.
+    const res = await emitWithCallback<Array<{ up: number; down: number; avgPing: number | null }>>(
+      socket, "getMonitorChartData", monitorID, periodHours
     );
-    if (!beats.length) return { uptime: 0, avgPing: null };
-    const ups = beats.filter((b) => b.status === 1).length;
-    const pings = beats.filter((b) => b.ping !== null).map((b) => b.ping as number);
-    return {
-      uptime: ups / beats.length,
-      avgPing: pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : null,
-    };
+    if (!res.ok || !Array.isArray(res.data)) throw new Error(res.msg || "Failed to get monitor statistics");
+    let up = 0, down = 0, pingTotal = 0, pingCount = 0;
+    for (const bucket of res.data) {
+      up += bucket.up;
+      down += bucket.down;
+      if (bucket.up > 0 && typeof bucket.avgPing === "number" && Number.isFinite(bucket.avgPing)) {
+        pingTotal += bucket.avgPing * bucket.up;
+        pingCount += bucket.up;
+      }
+    }
+    return { uptime: up + down > 0 ? up / (up + down) : null, avgPing: pingCount > 0 ? pingTotal / pingCount : null };
   });
 }
 
 export async function listNotifications(): Promise<unknown[]> {
-  return withSocket(async (socket) => {
-    return await new Promise<unknown[]>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for notificationList")), SOCKET_TIMEOUT_MS);
-      const handler = (data: unknown[]) => {
-        clearTimeout(timer);
-        socket.off("notificationList", handler);
-        resolve(data);
-      };
-      socket.on("notificationList", handler);
-      (socket.emit as unknown as (...a: unknown[]) => void)("getNotificationList");
-    });
+  return withSocket(async (_socket, lists) => {
+    const data = lists.get("notificationList");
+    if (!Array.isArray(data)) throw new Error("Kuma did not send notificationList during login");
+    // Notification configs contain webhook URLs, passwords and access tokens.
+    return data.map((n) => ({ id: n.id, name: n.name, type: n.config?.type ?? n.type ?? "unknown", active: n.active }));
   });
 }
 
 export async function listStatusPages(): Promise<unknown[]> {
-  return withSocket(async (socket) => {
-    return await new Promise<unknown[]>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for statusPageList")), SOCKET_TIMEOUT_MS);
-      const handler = (data: unknown[]) => {
-        clearTimeout(timer);
-        socket.off("statusPageList", handler);
-        resolve(data);
-      };
-      socket.on("statusPageList", handler);
-      (socket.emit as unknown as (...a: unknown[]) => void)("getStatusPageList");
-    });
+  return withSocket(async (_socket, lists) => {
+    const data = lists.get("statusPageList");
+    if (!data || typeof data !== "object") throw new Error("Kuma did not send statusPageList during login");
+    return Object.values(data);
   });
 }
 
